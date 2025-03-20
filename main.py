@@ -1,3 +1,32 @@
+from picamera2 import Picamera2
+from ultralytics import YOLO
+import cv2
+import numpy as np
+import re
+from sort import *
+from util import get_car, read_license_plate, write_csv
+
+# Funcție pentru validarea unui număr de înmatriculare
+
+def is_valid_plate(plate_text):
+    pattern = r"^[A-Z]{1,2}[0-9]{2,3}[A-Z]{3}$"  # Exemplu pentru numere românești
+    return re.match(pattern, plate_text) is not None
+
+# Inițializare cameră cu libcamera
+picam2 = Picamera2()
+camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
+picam2.configure(camera_config)
+picam2.start()
+
+results = {}
+mot_tracker = Sort()
+
+# Încarcă modelele YOLO
+coco_model = YOLO('yolov8n.pt')
+license_plate_detector = YOLO('./models/license_plate_detector.pt')
+
+vehicles = [2, 3, 5, 7]  # Clase de vehicule (ex: mașini, camioane)
+frame_nmr = -1
 from ultralytics import YOLO
 import cv2
 import numpy as np
@@ -97,3 +126,66 @@ while ret:
 
 cap.release()
 cv2.destroyAllWindows()
+while True:
+    frame_nmr += 1
+    
+    # Capturează un cadru din cameră
+    frame = picam2.capture_array()
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    cv2.imshow("Camera", frame)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+    
+    results[frame_nmr] = {}
+
+    # Detectează vehicule
+    detections = coco_model(frame)[0]
+    detections_ = []
+    for detection in detections.boxes.data.tolist():
+        x1, y1, x2, y2, score, class_id = detection
+        if int(class_id) in vehicles:
+            detections_.append([x1, y1, x2, y2, score])
+    
+    if detections_:
+        track_ids = mot_tracker.update(np.asarray(detections_))
+        
+        # Detectează plăcuțele de înmatriculare
+        license_plates = license_plate_detector(frame)[0]
+        for license_plate in license_plates.boxes.data.tolist():
+            x1, y1, x2, y2, score, class_id = license_plate
+
+            xcar1, ycar1, xcar2, ycar2, car_id = get_car(license_plate, track_ids)
+            
+            if car_id != -1:
+                license_plate_crop = frame[int(y1):int(y2), int(x1):int(x2), :]
+                license_plate_crop_gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
+                
+                # Aplică thresholding adaptiv
+                license_plate_crop_thresh = cv2.adaptiveThreshold(
+                    license_plate_crop_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
+                )
+                
+                license_plate_text, license_plate_text_score = read_license_plate(license_plate_crop_thresh)
+                
+                if license_plate_text and is_valid_plate(license_plate_text) and license_plate_text_score > 0.01:
+                    print(f"Număr detectat: {license_plate_text}, Scor OCR: {license_plate_text_score}")
+                    results[frame_nmr][car_id] = {
+                        'car': {'bbox': [xcar1, ycar1, xcar2, ycar2]},
+                        'license_plate': {
+                            'bbox': [x1, y1, x2, y2],
+                            'text': license_plate_text,
+                            'bbox_score': score,
+                            'text_score': license_plate_text_score
+                        }
+                    }
+                
+                # Afișează imaginea procesată
+                cv2.imshow("Plăcuță procesată", license_plate_crop_thresh)
+                
+        if results:
+            write_csv(results, './test.csv')
+
+# Cleanup
+cv2.destroyAllWindows()
+picam2.stop()
