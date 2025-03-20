@@ -1,0 +1,9 @@
+# Fisiere generate automat
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.DS_Store
+
+# Rezultate ocr
+test.csv
