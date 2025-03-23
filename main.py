@@ -11,10 +11,10 @@ from ultralytics import YOLO
 from sort import Sort
 from util import get_car, is_valid_plate
 from paddleocr import PaddleOCR
-
+import requests
 # Initializare camera
 picam2 = Picamera2()
-camera_config = picam2.create_preview_configuration(main={"size": (1280, 720)})
+camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
 picam2.configure(camera_config)
 picam2.start()
 
@@ -26,7 +26,8 @@ license_plate_detector = YOLO('./models/license_plate_detector.pt')
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
 
 # OCR
-ocr_model = PaddleOCR(use_angle_cls=True, lang='en')
+ocr_model = PaddleOCR(use_angle_cls=True, lang='en', det_db_box_thresh=0.6, rec_algorithm='CRNN', rec_model_dir=None, rec_char_dict_path=None, rec_image_shape='3,32,100', rec_model='en_PP-OCRv4_rec_infer', det_model='en_PP-OCRv4_det_infer', cls_model='ch_ppocr_mobile_v2.0_cls_infer', use_gpu=False)
+
 
 vehicles = [2]
 results = {}
@@ -73,8 +74,10 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
                 print(f"[INFO] Imaginea '{plate_filename}' a fost ?tearsa.")
             except Exception as e:
                 print(f"[ERROR] Nu am putut sterge imaginea '{plate_filename}': {e}")
+                os.remove(plate_filename)
         else:
             print("[WARNING] Textul curatat este gol dupa preprocesare.")
+            os.remove(plate_filename)
     else:
         print("[WARNING] PaddleOCR a intors rezultat invalid sau gol!")
 
@@ -88,7 +91,7 @@ def process_detection():
         frame = picam2.capture_array()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-        detections = coco_model(frame, imgsz=1024, conf=0.3, iou=0.5)[0]
+        detections = coco_model(frame, imgsz=640, conf=0.3, iou=0.5)[0]
         detections_ = [det[:5] for det in detections.boxes.data.tolist() if int(det[5]) in vehicles]
 
         if detections_:
