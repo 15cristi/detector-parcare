@@ -19,8 +19,8 @@ import board
 import busio
 from PIL import Image, ImageDraw, ImageFont
 import adafruit_ssd1306
-# ==== Configurare motor pas cu pas (barieră) ====
 
+# ==== Configurare motor pas cu pas (barieră) ====
 motor_pins = [14, 15, 18, 23]
 sequence = [
     [1, 0, 0, 0],
@@ -41,15 +41,27 @@ def rotate_motor(h, pins, steps, delay=0.002, reverse=False):
                 lgpio.gpio_write(h, pins[i], half_step[i])
             time.sleep(delay)
 
+def show_barrier_message(locuri_libere, message):
+    image = Image.new("1", (oled.width, oled.height))
+    draw = ImageDraw.Draw(image)
+    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
+    draw.text((0, 20), message, font=font, fill=255)
+    draw.text((0, 40), f"Locuri libere: {locuri_libere}", font=font, fill=255)
+    oled.image(image)
+    oled.show()
+
 def deschide_bariera():
     h = lgpio.gpiochip_open(0)
     for pin in motor_pins:
         lgpio.gpio_claim_output(h, pin)
 
     try:
+        libere = locuri_libere()
+        show_barrier_message(libere, "Ridic bariera")
         print("[INFO] 🔓 Ridic bariera (90°)")
         rotate_motor(h, motor_pins, 170)
         time.sleep(5)
+        show_barrier_message(libere, "Cobor bariera")
         print("[INFO] 🔒 Cobor bariera")
         rotate_motor(h, motor_pins, 170, reverse=True)
     finally:
@@ -59,32 +71,36 @@ def deschide_bariera():
         print("[INFO] ✅ Bariera resetata")
 
 
-# ==== Ini?ializare senzori HW-201 (infraro?u) ====
-sensor1 = DigitalInputDevice(17)  # GPIO17 (pin fizic 11)
-sensor2 = DigitalInputDevice(27)  # GPIO27 (pin fizic 13)
+
+def trimite_access_log(plate_number):
+    url = "http://192.168.1.131:8080/api/access"
+    payload = {
+        "licensePlate": plate_number
+    }
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print(f"[INFO] ?? Log trimis pentru {plate_number}")
+        else:
+            print(f"[ERROR] Logul NU a fost trimis (status {response.status_code})")
+    except Exception as e:
+        print(f"[EROARE] Conexiune la /api/access: {e}")
+
+# ==== Inițializare senzori HW-201 (infraroșu) ====
+sensor1 = DigitalInputDevice(17)
+sensor2 = DigitalInputDevice(27)
 
 def locuri_libere():
     return int(sensor1.value) + int(sensor2.value)
 
-
-# ==== Ini?ializare OLED SSD1306 ====
+# ==== Inițializare OLED SSD1306 ====
 i2c = busio.I2C(board.SCL, board.SDA)
 oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
 oled.fill(0)
 oled.show()
-
 font = ImageFont.load_default()
 
-def update_display(locuri_libere):
-    image = Image.new("1", (oled.width, oled.height))
-    draw = ImageDraw.Draw(image)
-    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
-    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
-    draw.text((0, 40), f">>> {locuri_libere} <<<", font=font, fill=255)
-    oled.image(image)
-    oled.show()
 # ==== Inițializare cameră, modele și OCR ====
-
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
 picam2.configure(camera_config)
@@ -127,16 +143,17 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
         if clean_text:
             if verifica_baza_date(clean_text):
                 print(f"[INFO] 🔓 {clean_text} este autorizat → Deschid bariera")
+                trimite_access_log(clean_text)
                 running = False
-                time.sleep(2)
-                deschide_bariera()
-                processed_cars.clear()  # cura?a ma?inile procesate
-                time.sleep(2)
+                time.sleep(3)
                 os.remove(plate_filename)
+                deschide_bariera()
+                processed_cars.clear()
+                time.sleep(3)
                 running = True
-
             else:
                 print(f"[INFO] ⛔ {clean_text} NU este autorizat.")
+                os.remove(plate_filename)
         else:
             print("[WARN] Placuta goala.")
     else:
@@ -147,7 +164,6 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
     except:
         pass
 
-
 def verifica_baza_date(plate_number):
     url = f"http://192.168.1.131:8080/api/vehicles/{plate_number}"
     try:
@@ -156,7 +172,6 @@ def verifica_baza_date(plate_number):
     except Exception as e:
         print(f"[EROARE] Conexiune la server: {e}")
         return False
-
 
 def process_detection():
     global frame_nmr, running
@@ -194,8 +209,16 @@ def process_detection():
         while not ocr_queue.empty():
             executor.submit(process_ocr, *ocr_queue.get())
 
-# ==== Start Threads ====
+def update_display(locuri_libere):
+    image = Image.new("1", (oled.width, oled.height))
+    draw = ImageDraw.Draw(image)
+    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
+    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
+    draw.text((0, 40), f">>> {locuri_libere} <<<", font=font, fill=255)
+    oled.image(image)
+    oled.show()
 
+# ==== Start Threads ====
 detection_thread = threading.Thread(target=process_detection, daemon=True)
 detection_thread.start()
 
