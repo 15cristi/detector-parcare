@@ -20,7 +20,7 @@ import busio
 from PIL import Image, ImageDraw, ImageFont
 import adafruit_ssd1306
 
-# ==== Configurare motor pas cu pas (barieră) ====
+# ==== Configurare motor pas cu pas (bariera intrare/iesire) ====
 motor_pins = [14, 15, 18, 23]
 sequence = [
     [1, 0, 0, 0],
@@ -58,11 +58,11 @@ def deschide_bariera():
     try:
         libere = locuri_libere()
         show_barrier_message(libere, "Ridic bariera")
-        print("[INFO] 🔓 Ridic bariera (90°)")
+        print("[INFO] 🔐 Ridic bariera")
         rotate_motor(h, motor_pins, 170)
         time.sleep(5)
         show_barrier_message(libere, "Cobor bariera")
-        print("[INFO] 🔒 Cobor bariera")
+        print("[INFO] 🔑 Cobor bariera")
         rotate_motor(h, motor_pins, 170, reverse=True)
     finally:
         for pin in motor_pins:
@@ -70,37 +70,50 @@ def deschide_bariera():
         lgpio.gpiochip_close(h)
         print("[INFO] ✅ Bariera resetata")
 
-
-
 def trimite_access_log(plate_number):
     url = "http://192.168.1.131:8080/api/access"
-    payload = {
-        "licensePlate": plate_number
-    }
+    payload = {"licensePlate": plate_number}
     try:
         response = requests.post(url, json=payload)
         if response.status_code == 200:
-            print(f"[INFO] ?? Log trimis pentru {plate_number}")
+            print(f"[INFO] ✅ Log trimis pentru {plate_number}")
         else:
             print(f"[ERROR] Logul NU a fost trimis (status {response.status_code})")
     except Exception as e:
         print(f"[EROARE] Conexiune la /api/access: {e}")
 
-# ==== Inițializare senzori HW-201 (infraroșu) ====
+# ==== Senzori ==== 
 sensor1 = DigitalInputDevice(17)
 sensor2 = DigitalInputDevice(27)
+sensor_exit = DigitalInputDevice(16)
+
+pause_detection_event = threading.Event()
+pause_detection_event.clear()
+
+last_exit_trigger_time = 0
+EXIT_DELAY = 5
+
 
 def locuri_libere():
     return int(sensor1.value) + int(sensor2.value)
 
-# ==== Inițializare OLED SSD1306 ====
+# ==== OLED SSD1306 ====
 i2c = busio.I2C(board.SCL, board.SDA)
 oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
 oled.fill(0)
 oled.show()
 font = ImageFont.load_default()
 
-# ==== Inițializare cameră, modele și OCR ====
+def update_display(locuri):
+    image = Image.new("1", (oled.width, oled.height))
+    draw = ImageDraw.Draw(image)
+    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
+    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
+    draw.text((0, 40), f"{locuri}", font=font, fill=255)
+    oled.image(image)
+    oled.show()
+
+# ==== Camera, modele YOLO, OCR ====
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
 picam2.configure(camera_config)
@@ -109,7 +122,6 @@ picam2.start()
 coco_model = YOLO('yolov8l.pt')
 license_plate_detector = YOLO('./models/license_plate_detector.pt')
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
-
 ocr_model = PaddleOCR(use_angle_cls=True, lang='en', det_db_box_thresh=0.6,
                       rec_algorithm='CRNN', use_gpu=False)
 
@@ -122,6 +134,15 @@ ocr_queue = Queue(maxsize=30)
 executor = ThreadPoolExecutor(max_workers=3)
 
 os.makedirs("plates", exist_ok=True)
+
+def verifica_baza_date(plate_number):
+    url = f"http://192.168.1.131:8080/api/vehicles/{plate_number}"
+    try:
+        response = requests.get(url)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[EROARE] Conexiune la server: {e}")
+        return False
 
 def process_ocr(frame_nmr, car_id, license_plate_crop):
     plate_filename = f"plates/crop_{frame_nmr}_{car_id}.jpg"
@@ -140,43 +161,33 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
 
         print(f"[INFO] Placuta curatata: {clean_text}")
 
-        if clean_text:
-            if verifica_baza_date(clean_text):
-                print(f"[INFO] 🔓 {clean_text} este autorizat → Deschid bariera")
-                trimite_access_log(clean_text)
-                running = False
-                time.sleep(3)
-                os.remove(plate_filename)
-                deschide_bariera()
-                processed_cars.clear()
-                time.sleep(3)
-                running = True
-            else:
-                print(f"[INFO] ⛔ {clean_text} NU este autorizat.")
-                os.remove(plate_filename)
+        if clean_text and verifica_baza_date(clean_text):
+            print(f"[INFO] 🔐 {clean_text} autorizat - deschid bariera")
+            trimite_access_log(clean_text)
+            pause_detection_event.set()
+            time.sleep(2)
+            os.remove(plate_filename)
+            deschide_bariera()
+            processed_cars.clear()
+            time.sleep(2)
+            pause_detection_event.clear()
         else:
-            print("[WARN] Placuta goala.")
-    else:
-        print("[WARN] OCR nu a returnat nimic.")
+            print(f"[INFO] {clean_text} nu este autorizat.")
+            os.remove(plate_filename)
 
     try:
         os.remove(plate_filename)
     except:
         pass
 
-def verifica_baza_date(plate_number):
-    url = f"http://192.168.1.131:8080/api/vehicles/{plate_number}"
-    try:
-        response = requests.get(url)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"[EROARE] Conexiune la server: {e}")
-        return False
-
 def process_detection():
     global frame_nmr, running
 
     while running:
+        if pause_detection_event.is_set():
+            time.sleep(0.5)
+            continue
+
         libere = locuri_libere()
         update_display(libere)
 
@@ -209,18 +220,28 @@ def process_detection():
         while not ocr_queue.empty():
             executor.submit(process_ocr, *ocr_queue.get())
 
-def update_display(locuri_libere):
-    image = Image.new("1", (oled.width, oled.height))
-    draw = ImageDraw.Draw(image)
-    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
-    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
-    draw.text((0, 40), f">>> {locuri_libere} <<<", font=font, fill=255)
-    oled.image(image)
-    oled.show()
+def monitor_iesire():
+    global running
+    last_state = 0
+    while running:
+        current_state = sensor_exit.value
+        if last_state == 0 and current_state == 1:
+            print("[IESIRE] Detectie noua la iesire. Ridic bariera...")
+            pause_detection_event.set()
+            deschide_bariera()
+            pause_detection_event.clear()
+            time.sleep(2)  # timp mic de debounce, ajustabil
+
+        last_state = current_state
+        time.sleep(0.1)  # scade frecven?a verificarii
+
 
 # ==== Start Threads ====
 detection_thread = threading.Thread(target=process_detection, daemon=True)
+exit_thread = threading.Thread(target=monitor_iesire, daemon=True)
+
 detection_thread.start()
+exit_thread.start()
 
 cv2.namedWindow("Camera Live", cv2.WINDOW_NORMAL)
 while running:
@@ -235,4 +256,5 @@ cv2.destroyAllWindows()
 picam2.stop()
 running = False
 detection_thread.join()
+exit_thread.join()
 executor.shutdown()
