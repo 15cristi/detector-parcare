@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 # Rezultate ocr
 test.csv
+testoled.py
+testsenzor.py
+teststepmotor.py
