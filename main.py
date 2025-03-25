@@ -4,6 +4,7 @@ import numpy as np
 import threading
 import os
 import re
+import time
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 from picamera2 import Picamera2
@@ -12,22 +13,89 @@ from sort import Sort
 from util import get_car, is_valid_plate
 from paddleocr import PaddleOCR
 import requests
-# Initializare camera
+import lgpio
+from gpiozero import DigitalInputDevice
+import board
+import busio
+from PIL import Image, ImageDraw, ImageFont
+import adafruit_ssd1306
+# ==== Configurare motor pas cu pas (barieră) ====
+
+motor_pins = [14, 15, 18, 23]
+sequence = [
+    [1, 0, 0, 0],
+    [1, 1, 0, 0],
+    [0, 1, 0, 0],
+    [0, 1, 1, 0],
+    [0, 0, 1, 0],
+    [0, 0, 1, 1],
+    [0, 0, 0, 1],
+    [1, 0, 0, 1],
+]
+
+def rotate_motor(h, pins, steps, delay=0.002, reverse=False):
+    seq = list(reversed(sequence)) if reverse else sequence
+    for step in range(steps):
+        for half_step in seq:
+            for i in range(4):
+                lgpio.gpio_write(h, pins[i], half_step[i])
+            time.sleep(delay)
+
+def deschide_bariera():
+    h = lgpio.gpiochip_open(0)
+    for pin in motor_pins:
+        lgpio.gpio_claim_output(h, pin)
+
+    try:
+        print("[INFO] 🔓 Ridic bariera (90°)")
+        rotate_motor(h, motor_pins, 170)
+        time.sleep(5)
+        print("[INFO] 🔒 Cobor bariera")
+        rotate_motor(h, motor_pins, 170, reverse=True)
+    finally:
+        for pin in motor_pins:
+            lgpio.gpio_write(h, pin, 0)
+        lgpio.gpiochip_close(h)
+        print("[INFO] ✅ Bariera resetata")
+
+
+# ==== Ini?ializare senzori HW-201 (infraro?u) ====
+sensor1 = DigitalInputDevice(17)  # GPIO17 (pin fizic 11)
+sensor2 = DigitalInputDevice(27)  # GPIO27 (pin fizic 13)
+
+def locuri_libere():
+    return int(sensor1.value) + int(sensor2.value)
+
+
+# ==== Ini?ializare OLED SSD1306 ====
+i2c = busio.I2C(board.SCL, board.SDA)
+oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
+oled.fill(0)
+oled.show()
+
+font = ImageFont.load_default()
+
+def update_display(locuri_libere):
+    image = Image.new("1", (oled.width, oled.height))
+    draw = ImageDraw.Draw(image)
+    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
+    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
+    draw.text((0, 40), f">>> {locuri_libere} <<<", font=font, fill=255)
+    oled.image(image)
+    oled.show()
+# ==== Inițializare cameră, modele și OCR ====
+
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
 picam2.configure(camera_config)
 picam2.start()
 
-# Modele YOLO
-coco_model = YOLO('yolov8m.pt')
+coco_model = YOLO('yolov8l.pt')
 license_plate_detector = YOLO('./models/license_plate_detector.pt')
-
-# Tracker
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
 
-# OCR
-ocr_model = PaddleOCR(use_angle_cls=True, lang='en', det_db_box_thresh=0.6, rec_algorithm='CRNN', rec_model_dir=None, rec_char_dict_path=None, rec_image_shape='3,32,100', rec_model='en_PP-OCRv4_rec_infer', det_model='en_PP-OCRv4_det_infer', cls_model='ch_ppocr_mobile_v2.0_cls_infer', use_gpu=False)
-
+ocr_model = PaddleOCR(use_angle_cls=True, lang='en', det_db_box_thresh=0.6,
+                      rec_algorithm='CRNN', use_gpu=False)
 
 vehicles = [2]
 results = {}
@@ -37,12 +105,10 @@ processed_cars = set()
 ocr_queue = Queue(maxsize=30)
 executor = ThreadPoolExecutor(max_workers=3)
 
-with open('./test.csv', 'w', newline='') as f:
-    csv.writer(f).writerow(["license_number"])
+os.makedirs("plates", exist_ok=True)
 
 def process_ocr(frame_nmr, car_id, license_plate_crop):
     plate_filename = f"plates/crop_{frame_nmr}_{car_id}.jpg"
-    os.makedirs("plates", exist_ok=True)
     cv2.imwrite(plate_filename, license_plate_crop)
 
     gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
@@ -50,43 +116,60 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
     _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     result = ocr_model.ocr(binary, cls=True)
-    print("[DEBUG] PaddleOCR detections (preprocesat):", result)
+    print("[DEBUG] OCR:", result)
 
     if result and len(result[0]) > 0 and len(result[0][0]) >= 2:
         text, score = result[0][0][1]
-        print(f"[DEBUG] Text original detectat: '{text}' cu scor {score}")
+        clean_text = re.sub(r'[^A-Z0-9]', '', text.upper().replace(" ", "").replace("-", "").strip())
 
-        clean_text = text.upper().replace(" ", "").replace("-", "").strip()
-        clean_text = re.sub(r'[^A-Z0-9]', '', clean_text)
-
-        print(f"[DEBUG] Text curatat pentru scriere in CSV: '{clean_text}'")
+        print(f"[INFO] Placuta curatata: {clean_text}")
 
         if clean_text:
-            with open('./test.csv', 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([clean_text])
-                f.flush()
-            print(f"[INFO] Scris direct in CSV: {clean_text}")
+            if verifica_baza_date(clean_text):
+                print(f"[INFO] 🔓 {clean_text} este autorizat → Deschid bariera")
+                running = False
+                time.sleep(2)
+                deschide_bariera()
+                processed_cars.clear()  # cura?a ma?inile procesate
+                time.sleep(2)
+                os.remove(plate_filename)
+                running = True
 
-            # ?terge imaginea dupa ce a fost scrisa in CSV
-            try:
-                os.remove(plate_filename)
-                print(f"[INFO] Imaginea '{plate_filename}' a fost ?tearsa.")
-            except Exception as e:
-                print(f"[ERROR] Nu am putut sterge imaginea '{plate_filename}': {e}")
-                os.remove(plate_filename)
+            else:
+                print(f"[INFO] ⛔ {clean_text} NU este autorizat.")
         else:
-            print("[WARNING] Textul curatat este gol dupa preprocesare.")
-            os.remove(plate_filename)
+            print("[WARN] Placuta goala.")
     else:
-        print("[WARNING] PaddleOCR a intors rezultat invalid sau gol!")
+        print("[WARN] OCR nu a returnat nimic.")
 
+    try:
+        os.remove(plate_filename)
+    except:
+        pass
+
+
+def verifica_baza_date(plate_number):
+    url = f"http://192.168.1.131:8080/api/vehicles/{plate_number}"
+    try:
+        response = requests.get(url)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[EROARE] Conexiune la server: {e}")
+        return False
 
 
 def process_detection():
     global frame_nmr, running
 
     while running:
+        libere = locuri_libere()
+        update_display(libere)
+
+        if libere == 0:
+            print("[INFO] Niciun loc liber. Asteapta...")
+            time.sleep(1)
+            continue
+
         frame_nmr += 1
         frame = picam2.capture_array()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -111,11 +194,11 @@ def process_detection():
         while not ocr_queue.empty():
             executor.submit(process_ocr, *ocr_queue.get())
 
-# Start detection thread
+# ==== Start Threads ====
+
 detection_thread = threading.Thread(target=process_detection, daemon=True)
 detection_thread.start()
 
-# Main live feed loop
 cv2.namedWindow("Camera Live", cv2.WINDOW_NORMAL)
 while running:
     frame = picam2.capture_array()
@@ -125,7 +208,6 @@ while running:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         running = False
 
-# Cleanup
 cv2.destroyAllWindows()
 picam2.stop()
 running = False
