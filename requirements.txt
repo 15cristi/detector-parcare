@@ -1,0 +1,14 @@
+opencv-python
+numpy
+requests
+ultralytics
+paddleocr
+picamera2
+lgpio
+gpiozero
+adafruit-circuitpython-ssd1306
+adafruit-blinka
+Pillow
+Adafruit_PureIO
+busio
+board
