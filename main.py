@@ -222,7 +222,9 @@ def process_detection():
 
 def monitor_iesire():
     global running
-    last_state = 0
+    time.sleep(0.1)
+    last_state = sensor_exit.value
+
     while running:
         current_state = sensor_exit.value
         if last_state == 0 and current_state == 1:
