@@ -19,6 +19,7 @@ import board
 import busio
 from PIL import Image, ImageDraw, ImageFont
 import adafruit_ssd1306
+from requests.auth import HTTPBasicAuth
 
 # ==== Configurare motor pas cu pas (bariera intrare/iesire) ====
 motor_pins = [14, 15, 18, 23]
@@ -72,11 +73,12 @@ def deschide_bariera():
 
 def trimite_access_log(plate_number):
     url = "http://192.168.1.131:8080/api/access"
+    auth = HTTPBasicAuth('admin1', 'test')
     payload = {"licensePlate": plate_number}
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, auth=auth)
         if response.status_code == 200:
-            print(f"[INFO] ✅ Log trimis pentru {plate_number}")
+            print(f"[INFO] ? Log trimis pentru {plate_number}")
         else:
             print(f"[ERROR] Logul NU a fost trimis (status {response.status_code})")
     except Exception as e:
@@ -137,9 +139,18 @@ os.makedirs("plates", exist_ok=True)
 
 def verifica_baza_date(plate_number):
     url = f"http://192.168.1.131:8080/api/vehicles/{plate_number}"
+    auth = HTTPBasicAuth('admin1', 'test')
     try:
-        response = requests.get(url)
-        return response.status_code == 200
+        response = requests.get(url, auth=auth)
+        if response.status_code == 200:
+            print(f"[INFO] Numarul {plate_number} este autorizat.")
+            return True
+        elif response.status_code == 404:
+            print(f"[INFO] Numarul {plate_number} nu este gasit �n baza de date.")
+            return False
+        else:
+            print(f"[EROARE] Eroare la verificare: {response.status_code}")
+            return False
     except Exception as e:
         print(f"[EROARE] Conexiune la server: {e}")
         return False
@@ -163,6 +174,7 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
 
         if clean_text and verifica_baza_date(clean_text):
             print(f"[INFO] 🔐 {clean_text} autorizat - deschid bariera")
+            auth = HTTPBasicAuth('admin1', 'test')
             trimite_access_log(clean_text)
             pause_detection_event.set()
             time.sleep(2)
