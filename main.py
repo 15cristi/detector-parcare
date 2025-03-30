@@ -117,14 +117,14 @@ def update_display(locuri):
 
 # ==== Camera, modele YOLO, OCR ====
 picam2 = Picamera2()
-camera_config = picam2.create_preview_configuration(main={"size": (640, 480)})
+camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
 picam2.configure(camera_config)
 picam2.start()
 
-coco_model = YOLO('yolov8l.pt')
+coco_model = YOLO('yolov8n.pt')
 license_plate_detector = YOLO('./models/license_plate_detector.pt')
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
-ocr_model = PaddleOCR(use_angle_cls=True, lang='en', det_db_box_thresh=0.6,
+ocr_model = PaddleOCR(use_angle_cls=True, lang='latin', det_db_box_thresh=0.6,
                       rec_algorithm='CRNN', use_gpu=False)
 
 vehicles = [2]
@@ -154,6 +154,8 @@ def verifica_baza_date(plate_number):
     except Exception as e:
         print(f"[EROARE] Conexiune la server: {e}")
         return False
+def is_valid_romanian_plate(plate):
+    return re.match(r'^[A-Z]{1,2}[0-9]{2,3}[A-Z]{3}$', plate) is not None
 
 def process_ocr(frame_nmr, car_id, license_plate_crop):
     plate_filename = f"plates/crop_{frame_nmr}_{car_id}.jpg"
@@ -172,7 +174,7 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
 
         print(f"[INFO] Placuta curatata: {clean_text}")
 
-        if clean_text and verifica_baza_date(clean_text):
+        if clean_text and is_valid_romanian_plate(clean_text) and verifica_baza_date(clean_text):
             print(f"[INFO] 🔐 {clean_text} autorizat - deschid bariera")
             auth = HTTPBasicAuth('admin1', 'test')
             trimite_access_log(clean_text)
@@ -183,6 +185,7 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
             processed_cars.clear()
             time.sleep(2)
             pause_detection_event.clear()
+            os.remove(plate_filename)
         else:
             print(f"[INFO] {clean_text} nu este autorizat.")
             os.remove(plate_filename)
