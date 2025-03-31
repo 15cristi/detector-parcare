@@ -121,7 +121,7 @@ camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
 picam2.configure(camera_config)
 picam2.start()
 
-coco_model = YOLO('yolov8n.pt')
+coco_model = YOLO('yolov8s.pt')
 license_plate_detector = YOLO('./models/license_plate_detector.pt')
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
 ocr_model = PaddleOCR(use_angle_cls=True, lang='latin', det_db_box_thresh=0.6,
@@ -237,21 +237,26 @@ def process_detection():
 
 def monitor_iesire():
     global running
-    time.sleep(0.1)
-    last_state = sensor_exit.value
+
+    bariera_deschisa = False
 
     while running:
-        current_state = sensor_exit.value
-        if last_state == 0 and current_state == 1:
-            print("[IESIRE] Detectie noua la iesire. Ridic bariera...")
+        # Senzorul tau e ACTIV c�nd valoarea e 0
+        if sensor_exit.value == 0 and not bariera_deschisa:
+            print("[IESIRE] Detectie la iesire. Ridic bariera...")
             pause_detection_event.set()
             deschide_bariera()
             pause_detection_event.clear()
-            time.sleep(2)  # timp mic de debounce, ajustabil
+            bariera_deschisa = True
 
-        last_state = current_state
-        time.sleep(0.1)  # scade frecven?a verificarii
+            # A?teapta eliberarea senzorului
+            while sensor_exit.value == 0 and running:
+                time.sleep(0.1)
 
+            print("[IESIRE] Senzor eliberat. Pregatit pentru urmatoarea ma?ina.")
+            bariera_deschisa = False
+
+        time.sleep(0.1)
 
 # ==== Start Threads ====
 detection_thread = threading.Thread(target=process_detection, daemon=True)
