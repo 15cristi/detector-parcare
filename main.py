@@ -121,7 +121,7 @@ camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
 picam2.configure(camera_config)
 picam2.start()
 
-coco_model = YOLO('yolov8s.pt')
+coco_model = YOLO('yolov8m.pt')
 license_plate_detector = YOLO('./models/license_plate_detector.pt')
 mot_tracker = Sort(max_age=2, min_hits=3, iou_threshold=0.5)
 ocr_model = PaddleOCR(use_angle_cls=True, lang='latin', det_db_box_thresh=0.6,
@@ -182,8 +182,8 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
             time.sleep(2)
             os.remove(plate_filename)
             deschide_bariera()
-            processed_cars.clear()
-            time.sleep(2)
+            processed_cars.add(car_id)
+            time.sleep(3)
             pause_detection_event.clear()
             os.remove(plate_filename)
         else:
@@ -227,7 +227,6 @@ def process_detection():
                 _, _, _, _, car_id = get_car(license_plate, track_ids)
 
                 if car_id != -1 and car_id not in processed_cars:
-                    processed_cars.add(car_id)
                     license_plate_crop = frame[int(y1):int(y2), int(x1):int(x2)]
                     if not ocr_queue.full():
                         ocr_queue.put((frame_nmr, car_id, license_plate_crop))
