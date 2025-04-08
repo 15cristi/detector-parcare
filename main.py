@@ -146,7 +146,7 @@ def verifica_baza_date(plate_number):
             print(f"[INFO] Numarul {plate_number} este autorizat.")
             return True
         elif response.status_code == 404:
-            print(f"[INFO] Numarul {plate_number} nu este gasit �n baza de date.")
+            print(f"[INFO] Numarul {plate_number} nu este gasit in baza de date.")
             return False
         else:
             print(f"[EROARE] Eroare la verificare: {response.status_code}")
@@ -157,43 +157,53 @@ def verifica_baza_date(plate_number):
 def is_valid_romanian_plate(plate):
     return re.match(r'^[A-Z]{1,2}[0-9]{2,3}[A-Z]{3}$', plate) is not None
 
+
 def process_ocr(frame_nmr, car_id, license_plate_crop):
     plate_filename = f"plates/crop_{frame_nmr}_{car_id}.jpg"
     cv2.imwrite(plate_filename, license_plate_crop)
 
-    gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
-    enhanced = cv2.equalizeHist(gray)
-    _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    result = ocr_model.ocr(binary, cls=True)
-    print("[DEBUG] OCR:", result)
-
-    if result and len(result[0]) > 0 and len(result[0][0]) >= 2:
-        text, score = result[0][0][1]
-        clean_text = re.sub(r'[^A-Z0-9]', '', text.upper().replace(" ", "").replace("-", "").strip())
-
-        print(f"[INFO] Placuta curatata: {clean_text}")
-
-        if clean_text and is_valid_romanian_plate(clean_text) and verifica_baza_date(clean_text):
-            print(f"[INFO] 🔐 {clean_text} autorizat - deschid bariera")
-            auth = HTTPBasicAuth('admin1', 'test')
-            trimite_access_log(clean_text)
-            pause_detection_event.set()
-            time.sleep(2)
-            os.remove(plate_filename)
-            deschide_bariera()
-            processed_cars.add(car_id)
-            time.sleep(3)
-            pause_detection_event.clear()
-            os.remove(plate_filename)
-        else:
-            print(f"[INFO] {clean_text} nu este autorizat.")
-            os.remove(plate_filename)
-
     try:
-        os.remove(plate_filename)
-    except:
-        pass
+        gray = cv2.cvtColor(license_plate_crop, cv2.COLOR_BGR2GRAY)
+        enhanced = cv2.equalizeHist(gray)
+        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        result = ocr_model.ocr(binary, cls=True)
+        print("[DEBUG] OCR:", result)
+
+        if result and len(result[0]) > 0 and len(result[0][0]) >= 2:
+            text, score = result[0][0][1]
+            clean_text = re.sub(r'[^A-Z0-9]', '', text.upper().replace(" ", "").replace("-", "").strip())
+
+            print(f"[INFO] Placuta curatata: {clean_text}")
+
+            if clean_text and is_valid_romanian_plate(clean_text) and verifica_baza_date(clean_text):
+                print(f"[INFO] ? {clean_text} autorizat - deschid bariera")
+                trimite_access_log(clean_text)
+                pause_detection_event.set()
+                time.sleep(2)
+                deschide_bariera()
+                processed_cars.add(car_id)
+                time.sleep(3)
+                pause_detection_event.clear()
+
+                # Asteapta 5 secunde si apoi sterge masina din set
+                time.sleep(5)
+                try:
+                    processed_cars.remove(car_id)
+                    print(f"[INFO] {clean_text} - car_id {car_id} resetat din processed_cars.")
+                except KeyError:
+                    print(f"[WARN] car_id {car_id} nu a fost gasit in processed_cars pentru eliminare.")
+            else:
+                print(f"[INFO] {clean_text} nu este autorizat.")
+        else:
+            print("[INFO] Nu s-a detectat text valid.")
+    finally:
+        if os.path.exists(plate_filename):
+            os.remove(plate_filename)
+
+
+
+
 
 def process_detection():
     global frame_nmr, running
@@ -240,7 +250,7 @@ def monitor_iesire():
     bariera_deschisa = False
 
     while running:
-        # Senzorul tau e ACTIV c�nd valoarea e 0
+        # Senzorul tau e ACTIV cand valoarea e 0
         if sensor_exit.value == 0 and not bariera_deschisa:
             print("[IESIRE] Detectie la iesire. Ridic bariera...")
             pause_detection_event.set()
@@ -248,7 +258,7 @@ def monitor_iesire():
             pause_detection_event.clear()
             bariera_deschisa = True
 
-            # A?teapta eliberarea senzorului
+            # Asteapta eliberarea senzorului
             while sensor_exit.value == 0 and running:
                 time.sleep(0.1)
 
