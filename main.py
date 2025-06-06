@@ -20,6 +20,8 @@ import busio
 from PIL import Image, ImageDraw, ImageFont
 import adafruit_ssd1306
 from requests.auth import HTTPBasicAuth
+from flask import Flask, jsonify
+from flask_cors import CORS
 
 # ==== Configurare motor pas cu pas (bariera intrare/iesire) ====
 motor_pins = [14, 15, 18, 23]
@@ -115,6 +117,7 @@ def update_display(locuri):
     oled.image(image)
     oled.show()
 
+
 # ==== Camera, modele YOLO, OCR ====
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
@@ -201,12 +204,11 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
         if os.path.exists(plate_filename):
             os.remove(plate_filename)
 
-
-
+last_parking_status = {"slot1": -1, "slot2": -1}
 
 
 def process_detection():
-    global frame_nmr, running
+    global frame_nmr, running, last_parking_status
 
     while running:
         if pause_detection_event.is_set():
@@ -215,6 +217,20 @@ def process_detection():
 
         libere = locuri_libere()
         update_display(libere)
+
+        current_status = {
+            "slot1": int(not sensor1.value),
+            "slot2": int(not sensor2.value)
+        }
+
+        if current_status != last_parking_status:
+            print(f"[INFO] ?? Status locuri schimbat: {current_status}")
+            last_parking_status = current_status.copy()
+
+            try:
+                requests.post("http://192.168.1.131:8080/api/slot-status", json=current_status)
+            except Exception as e:
+                print(f"[EROARE] Nu am putut trimite status: {e}")
 
         if libere == 0:
             print("[INFO] Niciun loc liber. Asteapta...")
@@ -282,6 +298,11 @@ while running:
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         running = False
+
+
+
+
+
 
 cv2.destroyAllWindows()
 picam2.stop()
