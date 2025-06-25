@@ -106,14 +106,14 @@ i2c = busio.I2C(board.SCL, board.SDA)
 oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
 oled.fill(0)
 oled.show()
-font = ImageFont.load_default()
+font = ImageFont.load_default(15)
 
 def update_display(locuri):
     image = Image.new("1", (oled.width, oled.height))
     draw = ImageDraw.Draw(image)
-    draw.text((0, 0), "Sistem Parcare", font=font, fill=255)
-    draw.text((0, 20), "Locuri libere:", font=font, fill=255)
-    draw.text((0, 40), f"{locuri}", font=font, fill=255)
+    draw.text((0, 11), "Sistem Parcare", font=ImageFont.load_default(15), fill=255)
+    draw.text((0, 35), "Locuri libere:"f"{locuri}", font=ImageFont.load_default(18), fill=255)
+    
     oled.image(image)
     oled.show()
 
