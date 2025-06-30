@@ -4,7 +4,7 @@ import csv
 import cv2
 import numpy as np
 
-# Initializam OCR
+
 reader = easyocr.Reader(['en'], gpu=False)
 
 def read_license_plate(image_path):
@@ -24,7 +24,7 @@ def read_license_plate(image_path):
         _, text, score = detection
         text = text.upper().replace(' ', '').replace('-', '').replace('_', '')
 
-        # Eliminam caracterele invalide
+        
         text = re.sub(r'[^A-Z0-9]', '', text)
 
         if is_valid_plate(text):
@@ -39,10 +39,7 @@ def is_valid_plate(text):
 
 
 def get_car(license_plate, vehicle_track_ids):
-    """
-    Asociaza placuta de inmatriculare cu o masina.
-    Compara coordonatele placutei cu coordonatele masinilor detectate.
-    """
+
     x1, y1, x2, y2, _, _ = license_plate
 
     for track in vehicle_track_ids:
