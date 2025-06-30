@@ -23,7 +23,7 @@ from requests.auth import HTTPBasicAuth
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-# ==== Configurare motor pas cu pas (bariera intrare/iesire) ====
+
 motor_pins = [14, 15, 18, 23]
 sequence = [
     [1, 0, 0, 0],
@@ -86,7 +86,7 @@ def trimite_access_log(plate_number):
     except Exception as e:
         print(f"[EROARE] Conexiune la /api/access: {e}")
 
-# ==== Senzori ==== 
+
 sensor1 = DigitalInputDevice(17)
 sensor2 = DigitalInputDevice(27)
 sensor_exit = DigitalInputDevice(16)
@@ -101,7 +101,7 @@ EXIT_DELAY = 5
 def locuri_libere():
     return int(sensor1.value) + int(sensor2.value)
 
-# ==== OLED SSD1306 ====
+
 i2c = busio.I2C(board.SCL, board.SDA)
 oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
 oled.fill(0)
@@ -118,7 +118,7 @@ def update_display(locuri):
     oled.show()
 
 
-# ==== Camera, modele YOLO, OCR ====
+
 picam2 = Picamera2()
 camera_config = picam2.create_preview_configuration(main={"size": (1920, 1080)})
 picam2.configure(camera_config)
@@ -189,7 +189,7 @@ def process_ocr(frame_nmr, car_id, license_plate_crop):
                 time.sleep(3)
                 pause_detection_event.clear()
 
-                # Asteapta 5 secunde si apoi sterge masina din set
+                
                 time.sleep(5)
                 try:
                     processed_cars.remove(car_id)
@@ -266,7 +266,7 @@ def monitor_iesire():
     bariera_deschisa = False
 
     while running:
-        # Senzorul tau e ACTIV cand valoarea e 0
+       
         if sensor_exit.value == 0 and not bariera_deschisa:
             print("[IESIRE] Detectie la iesire. Ridic bariera...")
             pause_detection_event.set()
@@ -274,7 +274,7 @@ def monitor_iesire():
             pause_detection_event.clear()
             bariera_deschisa = True
 
-            # Asteapta eliberarea senzorului
+            
             while sensor_exit.value == 0 and running:
                 time.sleep(0.1)
 
